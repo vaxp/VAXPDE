@@ -98,45 +98,147 @@ class DesktopEntry {
     return entries;
   }
 
-  // Tries to resolve an icon name to an AssetImage or FileImage. For now, only supports absolute paths or PNG/SVG in /usr/share/icons/hicolor/48x48/apps/.
+  // Tries to resolve an icon name to an AssetImage or FileImage
+  // Supports system icon themes and all icon types
   static ImageProvider<Object>? _iconProvider(String iconName) {
     if (iconName.isEmpty) return null;
+    
     // Absolute path
     if (iconName.contains('/') && File(iconName).existsSync()) {
       return FileImage(File(iconName));
     }
-    // Try common icon theme locations and extensions
-    final iconDirs = [
-      '/usr/share/icons/hicolor/48x48/apps/',
-      '/usr/share/icons/hicolor/64x64/apps/',
-      '/usr/share/icons/hicolor/128x128/apps/',
-      '/usr/share/pixmaps/',
-      '/usr/share/icons/Adwaita/48x48/apps/',
-      '/usr/share/icons/Adwaita/64x64/apps/',
-      '/usr/share/icons/Adwaita/128x128/apps/',
+    
+    // Try to detect current icon theme
+    final iconTheme = _detectIconTheme();
+    final exts = ['.png', '.svg', '.xpm'];
+    
+    // Search in current theme first, then fallback to other common themes
+    final themeSearchOrder = [
+      iconTheme, // Current theme
+      'hicolor',
+      'Adwaita',
+      'Adwaita-dark',
+      'ubuntu-mono-dark',
+      'ubuntu-mono-light',
+      'Papirus',
+      'Numix',
+      'Faenza',
+      'Moka',
+      'breeze',
+      'gnome',
+      'elementary',
     ];
-    final exts = ['.png', '.xpm', '.svg'];
-    for (final dir in iconDirs) {
-      for (final ext in exts) {
-        final path = dir + iconName + ext;
-        if (File(path).existsSync()) {
-          if (ext == '.svg') {
-            // Flutter does not support SVG natively; skip or use flutter_svg if available
-            continue;
+    
+    // Icon sizes to check (larger first for better quality)
+    final sizes = ['512', '256', '128', '96', '64', '48', '32', '24', '22', '16'];
+    
+    // Try to find icon in theme directories
+    for (final theme in themeSearchOrder) {
+      if (theme == null || theme.isEmpty) continue;
+      
+      // Check /usr/share/icons/[theme]/
+      final themeDir = '/usr/share/icons/$theme/';
+      if (!Directory(themeDir).existsSync()) continue;
+      
+      // Check all sizes and subdirectories
+      for (final size in sizes) {
+        final dirsToCheck = [
+          '$themeDir/${size}x$size/apps',
+          '$themeDir/${size}x$size/categories',
+          '$themeDir/${size}x$size/emblems',
+          '$themeDir/${size}x$size/mimetypes',
+          '$themeDir/${size}x$size/places',
+          '$themeDir/${size}x$size/status',
+          '$themeDir/apps', // Some themes don't have size directories
+          '$themeDir/categories',
+          '$themeDir/emblems',
+          '$themeDir/mimetypes',
+          '$themeDir/places',
+          '$themeDir/status',
+        ];
+        
+        for (final dirPath in dirsToCheck) {
+          if (!Directory(dirPath).existsSync()) continue;
+          
+          // Try different extensions
+          for (final ext in exts) {
+            final path = '$dirPath/$iconName$ext';
+            if (File(path).existsSync()) {
+              if (ext == '.svg') {
+                // Skip SVG for now as it requires flutter_svg package
+                // Could integrate flutter_svg here if needed
+                continue;
+              }
+              return FileImage(File(path));
+            }
           }
+          
+          // Try without extension
+          final path = '$dirPath/$iconName';
+          if (File(path).existsSync()) {
+            return FileImage(File(path));
+          }
+        }
+      }
+    }
+    
+    // Fallback to generic pixmaps
+    final pixmapsDir = '/usr/share/pixmaps/';
+    for (final ext in exts) {
+      final path = '$pixmapsDir/$iconName$ext';
+      if (File(path).existsSync()) {
+        if (ext != '.svg') {
           return FileImage(File(path));
         }
       }
     }
-    // Try with no extension (some pixmaps are just the name)
-    for (final dir in iconDirs) {
-      final path = dir + iconName;
-      if (File(path).existsSync()) {
-        return FileImage(File(path));
-      }
+    
+    // Try pixmaps without extension
+    final pixmapPath = '$pixmapsDir/$iconName';
+    if (File(pixmapPath).existsSync()) {
+      return FileImage(File(pixmapPath));
     }
-    // Fallback: use a default Material icon (via AssetImage or null)
+    
     return null;
+  }
+  
+  // Detect current icon theme from system
+  static String? _detectIconTheme() {
+    try {
+      // Try to read from gsettings (GNOME/Ubuntu)
+      final gsettings = Process.runSync('gsettings', ['get', 'org.gnome.desktop.interface', 'icon-theme']);
+      if (gsettings.exitCode == 0) {
+        final theme = gsettings.stdout.toString().trim().replaceAll("'", '').replaceAll('"', '');
+        if (theme.isNotEmpty && theme != 'default') {
+          return theme;
+        }
+      }
+    } catch (_) {}
+    
+    try {
+      // Try to read from ~/.config/gtk-3.0/settings.ini
+      final configFile = File('${Platform.environment['HOME']}/.config/gtk-3.0/settings.ini');
+      if (configFile.existsSync()) {
+        final content = configFile.readAsStringSync();
+        final match = RegExp(r'gtk-icon-theme-name\s*=\s*([^\s]+)', caseSensitive: false).firstMatch(content);
+        if (match != null && match.group(1) != null) {
+          final theme = match.group(1)!.replaceAll('"', '').replaceAll("'", '');
+          if (theme.isNotEmpty && theme != 'default') {
+            return theme;
+          }
+        }
+      }
+    } catch (_) {}
+    
+    try {
+      // Try to read from environment
+      final iconTheme = Platform.environment['XDG_CURRENT_DESKTOP'];
+      if (iconTheme != null && iconTheme.isNotEmpty) {
+        // This doesn't give us the theme name, but we can use it as a hint
+      }
+    } catch (_) {}
+    
+    return null; // Will fall back to hicolor if null
   }
 }
 
@@ -416,22 +518,29 @@ class _PanelHomeState extends State<PanelHome> {
   // For volume and brightness control
   double _volume = 0.5;
   double _brightness = 0.75;
+  
+  // Track if app grid dialog is open
+  bool _isAppGridOpen = false;
 
   @override
   void initState() {
     super.initState();
     _allAppsFuture = DesktopEntry.loadAll();
-    // default pinned: first few apps when available
-    _allAppsFuture.then((list) {
-      if (!mounted) return;
-      setState(() {
-        if (_pinned.isEmpty) _pinned = list.take(6).toList();
-      });
-    });
+    // Load pinned apps
+    _loadPinnedApps();
 
     _now = DateTime.now();
     _timeStream = ticker;
     _initializeVolumeAndBrightness();
+  }
+
+  // Load pinned apps from desktop entries
+  Future<void> _loadPinnedApps() async {
+    final apps = await _allAppsFuture;
+    if (!mounted) return;
+    setState(() {
+      _pinned = apps.take(6).toList();
+    });
   }
 
   // Initialize volume and brightness from system
@@ -571,6 +680,10 @@ class _PanelHomeState extends State<PanelHome> {
   }
 
   void _openAppGrid(List<DesktopEntry> apps) async {
+    setState(() {
+      _isAppGridOpen = true;
+    });
+    
     await showDialog<void>(
       context: context,
       barrierColor: Colors.black38,
@@ -584,6 +697,10 @@ class _PanelHomeState extends State<PanelHome> {
         ),
       ),
     );
+    
+    setState(() {
+      _isAppGridOpen = false;
+    });
   }
 
   void _launchEntry(DesktopEntry entry) async {
@@ -1060,12 +1177,13 @@ class _PanelHomeState extends State<PanelHome> {
                   ),
                 ),
                 Expanded(child: Container()),
-                // Bottom bar: macOS dock style
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 24.0),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
+                // Bottom bar: macOS dock style - only show when app grid is closed
+                if (!_isAppGridOpen)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 24.0),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
                       // Left side apps
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
