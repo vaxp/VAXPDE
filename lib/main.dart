@@ -1,9 +1,6 @@
-
-import 'package:vaxp_panel/_mac_shortcut_tile.dart';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
-
 import 'package:flutter/material.dart';
 
 void main() {
@@ -200,6 +197,103 @@ class AppGrid extends StatelessWidget {
   }
 }
 
+// Helper widget for quick toggle buttons
+class _QuickToggleButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+
+  const _QuickToggleButton({
+    required this.icon,
+    required this.label,
+    required this.active,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: Container(
+          height: 60,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          decoration: BoxDecoration(
+            color: active ? Colors.blue.withOpacity(0.15) : Colors.white.withOpacity(0.6),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: active ? Colors.blue.withOpacity(0.4) : Colors.black.withOpacity(0.08),
+              width: 1.5,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                icon,
+                color: active ? Colors.blue : Colors.black87,
+                size: 24,
+              ),
+              const SizedBox(width: 12),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: active ? Colors.blue : Colors.black87,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// Helper widget for small circular toggle buttons
+class _SmallToggleButton extends StatelessWidget {
+  final IconData icon;
+  final bool active;
+  final VoidCallback onTap;
+
+  const _SmallToggleButton({
+    required this.icon,
+    required this.active,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: Container(
+          width: 60,
+          height: 60,
+          decoration: BoxDecoration(
+            color: active ? Colors.blue.withOpacity(0.15) : Colors.white.withOpacity(0.6),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: active ? Colors.blue.withOpacity(0.4) : Colors.black.withOpacity(0.08),
+              width: 1.5,
+            ),
+          ),
+          child: Icon(
+            icon,
+            color: active ? Colors.blue : Colors.black87,
+            size: 28,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class PanelHome extends StatefulWidget {
   const PanelHome({super.key});
 
@@ -215,6 +309,10 @@ class _PanelHomeState extends State<PanelHome> {
   late DateTime _now;
   late final ticker = Stream<DateTime>.periodic(const Duration(seconds: 1), (_) => DateTime.now());
   late final Stream<DateTime> _timeStream;
+  
+  // For volume and brightness control
+  double _volume = 0.5;
+  double _brightness = 0.75;
 
   @override
   void initState() {
@@ -230,6 +328,143 @@ class _PanelHomeState extends State<PanelHome> {
 
     _now = DateTime.now();
     _timeStream = ticker;
+    _initializeVolumeAndBrightness();
+  }
+
+  // Initialize volume and brightness from system
+  Future<void> _initializeVolumeAndBrightness() async {
+    // Get current volume
+    try {
+      final result = await Process.run('pactl', ['get-sink-volume', '@DEFAULT_SINK@']);
+      if (result.exitCode == 0) {
+        final output = result.stdout.toString();
+        // Extract percentage from output like "Volume: front-left: 36864 /  56% / -11.53 dB"
+        final match = RegExp(r'(\d+)%').firstMatch(output);
+        if (match != null) {
+          final percentage = int.parse(match.group(1)!);
+          if (mounted) {
+            setState(() {
+              _volume = percentage / 100.0;
+            });
+          }
+        }
+      }
+    } catch (e) {
+      // Fallback to amixer if pactl fails
+      try {
+        final result = await Process.run('amixer', ['sget', 'Master']);
+        if (result.exitCode == 0) {
+          final output = result.stdout.toString();
+          final match = RegExp(r'\[(\d+)%\]').firstMatch(output);
+          if (match != null) {
+            final percentage = int.parse(match.group(1)!);
+            if (mounted) {
+              setState(() {
+                _volume = percentage / 100.0;
+              });
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Get current brightness
+    try {
+      final result = await Process.run('brightnessctl', ['get']);
+      if (result.exitCode == 0) {
+        final maxResult = await Process.run('brightnessctl', ['max']);
+        if (maxResult.exitCode == 0) {
+          final current = int.parse(result.stdout.toString().trim());
+          final max = int.parse(maxResult.stdout.toString().trim());
+          if (mounted) {
+            setState(() {
+              _brightness = current / max;
+            });
+          }
+        }
+      }
+    } catch (e) {
+      // Try reading from /sys/class/backlight/ directly
+      try {
+        final backlightDirs = Directory('/sys/class/backlight/').listSync();
+        if (backlightDirs.isNotEmpty) {
+          final dir = backlightDirs.first.path;
+          final brightnessFile = File('$dir/brightness');
+          final maxBrightnessFile = File('$dir/max_brightness');
+          if (await brightnessFile.exists() && await maxBrightnessFile.exists()) {
+            final brightness = int.parse(await brightnessFile.readAsString());
+            final maxBrightness = int.parse(await maxBrightnessFile.readAsString());
+            if (mounted) {
+              setState(() {
+                _brightness = brightness / maxBrightness;
+              });
+            }
+          }
+        }
+      } catch (_) {}
+    }
+  }
+
+  // Set system volume
+  Future<void> _setVolume(double volume) async {
+    final volumePercent = (volume * 100).toInt();
+    try {
+      // Try pactl first
+      final result = await Process.run('pactl', ['set-sink-volume', '@DEFAULT_SINK@', '$volumePercent%']);
+      if (result.exitCode == 0) {
+        if (mounted) {
+          setState(() {
+            _volume = volume;
+          });
+        }
+        return;
+      }
+    } catch (e) {
+      // Fallback to amixer
+      try {
+        final result = await Process.run('amixer', ['set', 'Master', '$volumePercent%']);
+        if (result.exitCode == 0 && mounted) {
+          setState(() {
+            _volume = volume;
+          });
+        }
+      } catch (_) {}
+    }
+  }
+
+  // Set system brightness
+  Future<void> _setBrightness(double brightness) async {
+    try {
+      // Try brightnessctl first
+      final brightnessPercent = (brightness * 100).toInt();
+      final result = await Process.run('brightnessctl', ['set', '$brightnessPercent%']);
+      if (result.exitCode == 0 && mounted) {
+        setState(() {
+          _brightness = brightness;
+        });
+        return;
+      }
+    } catch (e) {
+      // Fallback to direct file write
+      try {
+        final backlightDirs = Directory('/sys/class/backlight/').listSync();
+        if (backlightDirs.isNotEmpty) {
+          final dir = backlightDirs.first.path;
+          final maxBrightnessFile = File('$dir/max_brightness');
+          if (await maxBrightnessFile.exists()) {
+            final maxBrightness = int.parse(await maxBrightnessFile.readAsString());
+            final targetBrightness = (brightness * maxBrightness).round();
+            final brightnessFile = File('$dir/brightness');
+            await brightnessFile.writeAsString(targetBrightness.toString());
+            if (mounted) {
+              setState(() {
+                _brightness = brightness;
+              });
+            }
+          }
+        }
+      } catch (_) {}
+    }
   }
 
   void _openAppGrid(List<DesktopEntry> apps) async {
@@ -299,104 +534,275 @@ class _PanelHomeState extends State<PanelHome> {
       }
     }
 
-    showDialog(
-      context: context,
-      barrierColor: Colors.black38,
-      builder: (ctx) => Dialog(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        child: Center(
-          child: Container(
+    // Store the screen height for positioning
+    double screenHeight = MediaQuery.of(context).size.height;
 
-            width: 420,
-            padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 18),
-            decoration: BoxDecoration(
-              color: const Color.fromARGB(25, 255, 255, 255), // 10% opacity (90% transparent)
-              borderRadius: BorderRadius.circular(28),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.10),
-                  blurRadius: 32,
-                  offset: const Offset(0, 8),
-                ),
-              ],
-            ),
-            child: Container(
-                  color: const Color.fromARGB(25, 255, 255, 255),
-               child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Quick Settings',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black87,
-                        ),
-                      ),
-                      IconButton(
-                        icon: Icon(Icons.close),
-                        onPressed: () => Navigator.of(ctx).pop(),
+    showGeneralDialog(
+      context: context,
+      barrierColor: Colors.black12, // Subtle backdrop
+      barrierDismissible: true,
+      barrierLabel: 'Control Center',
+      transitionDuration: const Duration(milliseconds: 300),
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        final curvedAnimation = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+        );
+        return FadeTransition(
+          opacity: curvedAnimation,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, -1), // Start from top
+              end: Offset.zero,
+            ).animate(curvedAnimation),
+            child: child,
+          ),
+        );
+      },
+      pageBuilder: (context, animation, secondaryAnimation) {
+        return Align(
+          alignment: Alignment.topRight,
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 8.0, right: 16.0),
+              child: Material(
+                color: Colors.transparent,
+                child: Container(
+                  width: 380,
+                  constraints: BoxConstraints(
+                    maxHeight: screenHeight * 0.85,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.85),
+                    borderRadius: BorderRadius.circular(24),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.15),
+                        blurRadius: 40,
+                        offset: const Offset(0, 8),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 10),
-                  // Shortcuts section
-                  Material(
-                    color: Colors.transparent,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(24),
                     child: Column(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        MacShortcutTile(
-                          icon: Icons.wifi,
-                          label: wifiEnabled ? 'Disable Internet' : 'Enable Internet',
-                          onTap: wifiEnabled ? _disableInternet : _enableInternet,
-                          active: wifiEnabled,
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                          decoration: BoxDecoration(
+                            border: Border(
+                              bottom: BorderSide(
+                                color: Colors.black.withOpacity(0.08),
+                                width: 1,
+                              ),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text(
+                                'Control Center',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black87,
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.close, size: 20),
+                                onPressed: () => Navigator.of(context).pop(),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                              ),
+                            ],
+                          ),
                         ),
-                        const SizedBox(height: 8),
-                        MacShortcutTile(
-                          icon: Icons.airplanemode_active,
-                          label: 'Airplane Mode',
-                          onTap: _toggleAirplaneMode,
-                          active: airplaneMode,
-                        ),
-                        const SizedBox(height: 8),
-                        MacShortcutTile(
-                          icon: Icons.bluetooth,
-                          label: 'Bluetooth',
-                          onTap: _toggleBluetooth,
-                          active: bluetoothEnabled,
-                        ),
-                        const SizedBox(height: 8),
-                        MacShortcutTile(
-                          icon: Icons.settings,
-                          label: 'Settings',
-                          onTap: _openSettings,
-                          active: false,
+                        Flexible(
+                          child: SingleChildScrollView(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              children: [
+                                // Connectivity section
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: _QuickToggleButton(
+                                        icon: Icons.wifi,
+                                        label: 'Wi-Fi',
+                                        active: wifiEnabled,
+                                        onTap: wifiEnabled ? _disableInternet : _enableInternet,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    _SmallToggleButton(
+                                      icon: Icons.bluetooth,
+                                      active: bluetoothEnabled,
+                                      onTap: _toggleBluetooth,
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                // Focus and additional controls
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: _QuickToggleButton(
+                                        icon: Icons.airplanemode_active,
+                                        label: 'Airplane',
+                                        active: airplaneMode,
+                                        onTap: _toggleAirplaneMode,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    _SmallToggleButton(
+                                      icon: Icons.dark_mode,
+                                      active: false,
+                                      onTap: () {},
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 16),
+                                // Display brightness
+                                Container(
+                                  height: 60,
+                                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.6),
+                                    borderRadius: BorderRadius.circular(16),
+                                    border: Border.all(
+                                      color: Colors.black.withOpacity(0.06),
+                                      width: 1,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        _brightness < 0.33 ? Icons.brightness_3 :
+                                        _brightness < 0.66 ? Icons.brightness_6 : Icons.brightness_7,
+                                        size: 24,
+                                      ),
+                                      const SizedBox(width: 12),
+                                      const Expanded(
+                                        child: Text(
+                                          'Display',
+                                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                                        ),
+                                      ),
+                                      Expanded(
+                                        flex: 2,
+                                        child: Slider(
+                                          value: _brightness,
+                                          onChanged: _setBrightness,
+                                          activeColor: Colors.white,
+                                          inactiveColor: Colors.grey.withOpacity(0.3),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                // Sound volume
+                                Container(
+                                  height: 60,
+                                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.6),
+                                    borderRadius: BorderRadius.circular(16),
+                                    border: Border.all(
+                                      color: Colors.black.withOpacity(0.06),
+                                      width: 1,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        _volume == 0 ? Icons.volume_off :
+                                        _volume < 0.5 ? Icons.volume_down : Icons.volume_up,
+                                        size: 24,
+                                      ),
+                                      const SizedBox(width: 12),
+                                      const Expanded(
+                                        child: Text(
+                                          'Sound',
+                                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                                        ),
+                                      ),
+                                      Expanded(
+                                        flex: 2,
+                                        child: Slider(
+                                          value: _volume,
+                                          onChanged: _setVolume,
+                                          activeColor: Colors.white,
+                                          inactiveColor: Colors.grey.withOpacity(0.3),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                // Settings button
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: ElevatedButton.icon(
+                                    icon: const Icon(Icons.settings),
+                                    label: const Text('Settings'),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.white.withOpacity(0.7),
+                                      foregroundColor: Colors.black87,
+                                      padding: const EdgeInsets.symmetric(vertical: 14),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(14),
+                                        side: BorderSide(
+                                          color: Colors.black.withOpacity(0.1),
+                                          width: 1,
+                                        ),
+                                      ),
+                                    ),
+                                    onPressed: () {
+                                      Navigator.of(context).pop();
+                                      _openSettings();
+                                    },
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                // Background image picker
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: ElevatedButton.icon(
+                                    icon: const Icon(Icons.image),
+                                    label: const Text('Change Background'),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.white.withOpacity(0.7),
+                                      foregroundColor: Colors.black87,
+                                      padding: const EdgeInsets.symmetric(vertical: 14),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(14),
+                                        side: BorderSide(
+                                          color: Colors.black.withOpacity(0.1),
+                                          width: 1,
+                                        ),
+                                      ),
+                                    ),
+                                    onPressed: () {
+                                      Navigator.of(context).pop();
+                                      pickAndSetBackground();
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: 18),
-                  // Background image picker
-                  ElevatedButton.icon(
-                    icon: const Icon(Icons.image),
-                    label: const Text('Set Background Image'),
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                      textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                    ),
-                    onPressed: pickAndSetBackground,
-                  ),
-                ],
+                ),
               ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
