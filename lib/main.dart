@@ -197,6 +197,109 @@ class AppGrid extends StatelessWidget {
   }
 }
 
+// Helper widget for macOS dock icons
+class _DockIcon extends StatefulWidget {
+  final IconData? icon;
+  final ImageProvider<Object>? iconData;
+  final String? tooltip;
+  final VoidCallback onTap;
+  final String? name;
+
+  const _DockIcon({
+    this.icon,
+    this.iconData,
+    this.tooltip,
+    required this.onTap,
+    this.name,
+  }) : assert(icon != null || iconData != null, 'Either icon or iconData must be provided');
+
+  @override
+  State<_DockIcon> createState() => _DockIconState();
+}
+
+class _DockIconState extends State<_DockIcon> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _scaleAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 150),
+      vsync: this,
+    );
+    _scaleAnimation = Tween<double>(begin: 1.0, end: 1.25).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => _controller.forward(),
+      onExit: (_) => _controller.reverse(),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: Tooltip(
+          message: widget.tooltip ?? widget.name ?? '',
+          child: AnimatedBuilder(
+            animation: _scaleAnimation,
+            builder: (context, child) {
+              return Transform.scale(
+                scale: _scaleAnimation.value,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(10),
+                        color: widget.iconData != null ? null : Colors.transparent,
+                      ),
+                      child: widget.iconData != null
+                          ? ClipRRect(
+                              borderRadius: BorderRadius.circular(10),
+                              child: Image(
+                                image: widget.iconData!,
+                                width: 48,
+                                height: 48,
+                                fit: BoxFit.cover,
+                              ),
+                            )
+                          : Icon(
+                              widget.icon ?? Icons.apps,
+                              size: 48,
+                              color: Colors.white.withOpacity(0.9),
+                            ),
+                    ),
+                    // Running indicator dot
+                    Container(
+                      margin: const EdgeInsets.only(top: 4),
+                      width: 4,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.8),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 // Helper widget for quick toggle buttons
 class _QuickToggleButton extends StatelessWidget {
   final IconData icon;
@@ -957,59 +1060,113 @@ class _PanelHomeState extends State<PanelHome> {
                   ),
                 ),
                 Expanded(child: Container()),
-                // Bottom bar: app bar
-                Container(
-                  height: 40,
-                  // color: Theme.of(context).colorScheme.surface,
-                  color: const Color.fromARGB(110, 0, 0, 0),
+                // Bottom bar: macOS dock style
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 24.0),
                   child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const SizedBox(width: 8),
-                      IconButton(
-                        tooltip: 'Show all apps',
-                        icon: const Icon(Icons.apps),
-                        onPressed: () async {
-                          final apps = await _allAppsFuture;
-                          _openAppGrid(apps);
-                        },
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: _pinned
-                                .map(
-                                  (entry) => Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 6.0,
-                                    ),
-                                    child: Tooltip(
-                                      message: entry.name,
-                                      child: InkWell(
-                                        onTap: () => _launchEntry(entry),
-                                        child: SizedBox(
-                                          width: 44,
-                                          height: 44,
-                                          child: entry.iconData != null
-                                              ? CircleAvatar(
-                                                  backgroundImage: entry.iconData,
-                                                )
-                                              : CircleAvatar(
-                                                  child: Icon(
-                                                    Icons.apps,
-                                                    size: 22,
-                                                  ),
-                                                ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                )
-                                .toList(),
+                      // Left side apps
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.3),
+                          borderRadius: BorderRadius.circular(28),
+                          border: Border.all(
+                            color: Colors.white.withOpacity(0.1),
+                            width: 1,
                           ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // App Grid button
+                            _DockIcon(
+                              icon: Icons.apps,
+                              tooltip: 'Show all apps',
+                              onTap: () async {
+                                final apps = await _allAppsFuture;
+                                _openAppGrid(apps);
+                              },
+                            ),
+                            // Separator
+                            Container(
+                              width: 1,
+                              height: 32,
+                              margin: const EdgeInsets.symmetric(horizontal: 8),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(0.5),
+                              ),
+                            ),
+                            // Pinned apps
+                            if (_pinned.isNotEmpty)
+                              ..._pinned.asMap().entries.expand(
+                                (entry) {
+                                  if (entry.value.iconData != null) {
+                                    return [
+                                      _DockIcon(
+                                        iconData: entry.value.iconData,
+                                        tooltip: entry.value.name,
+                                        onTap: () => _launchEntry(entry.value),
+                                        name: entry.value.name,
+                                      ),
+                                      if (entry.key < _pinned.length - 1) const SizedBox(width: 4),
+                                    ];
+                                  } else {
+                                    return [
+                                      _DockIcon(
+                                        icon: Icons.apps,
+                                        tooltip: entry.value.name,
+                                        onTap: () => _launchEntry(entry.value),
+                                        name: entry.value.name,
+                                      ),
+                                      if (entry.key < _pinned.length - 1) const SizedBox(width: 4),
+                                    ];
+                                  }
+                                },
+                              ),
+                            // Right side utilities separator
+                            Container(
+                              width: 1,
+                              height: 32,
+                              margin: const EdgeInsets.symmetric(horizontal: 8),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(0.5),
+                              ),
+                            ),
+                            // Downloads folder
+                            _DockIcon(
+                              icon: Icons.folder,
+                              tooltip: 'Downloads',
+                              onTap: () async {
+                                try {
+                                  await Process.start('/bin/sh', ['-c', 'xdg-open ~/Downloads']);
+                                } catch (e) {
+                                  if (!mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text('Failed to open Downloads')),
+                                  );
+                                }
+                              },
+                            ),
+                            // Trash
+                            _DockIcon(
+                              icon: Icons.delete_outline,
+                              tooltip: 'Trash',
+                              onTap: () async {
+                                try {
+                                  await Process.start('/bin/sh', ['-c', 'xdg-open trash://']);
+                                } catch (e) {
+                                  if (!mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text('Failed to open Trash')),
+                                  );
+                                }
+                              },
+                            ),
+                          ],
                         ),
                       ),
                     ],
