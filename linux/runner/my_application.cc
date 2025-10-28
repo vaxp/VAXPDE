@@ -39,15 +39,17 @@ static void my_application_activate(GApplication* application) {
   // Remove window decorations
   gtk_window_set_decorated(window, FALSE);
   
-  // Make it stay on top of other windows
-  gtk_window_set_keep_above(window, TRUE);
+  // Set it as a dock/panel window type
+  gtk_window_set_type_hint(window, GDK_WINDOW_TYPE_HINT_DOCK);
   
   // Make it show on all workspaces
   gtk_window_set_skip_taskbar_hint(window, TRUE);
   gtk_window_set_skip_pager_hint(window, TRUE);
   
-  // Set it to fullscreen
+  // Set it to fullscreen and make sure it stays fullscreen
   gtk_window_fullscreen(window);
+  g_signal_connect(G_OBJECT(window), "window-state-event",
+                  G_CALLBACK(gtk_window_fullscreen), NULL);
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();
   fl_dart_project_set_dart_entrypoint_arguments(project, self->dart_entrypoint_arguments);
