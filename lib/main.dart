@@ -174,8 +174,14 @@ class DesktopEntry {
 class AppGrid extends StatelessWidget {
   final List<DesktopEntry> apps;
   final void Function(DesktopEntry) onLaunch;
+  final void Function(DesktopEntry)? onPin;
 
-  const AppGrid({super.key, required this.apps, required this.onLaunch});
+  const AppGrid({
+    super.key, 
+    required this.apps, 
+    required this.onLaunch,
+    this.onPin,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -194,12 +200,37 @@ class AppGrid extends StatelessWidget {
 
 
         final e = apps[index];
-        return InkWell(
-          borderRadius: BorderRadius.circular(18),
-          onTap: () {
-            Navigator.of(context).maybePop();
-            onLaunch(e);
+        return GestureDetector(
+          onSecondaryTapUp: (details) {
+            final RenderBox overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+            final position = RelativeRect.fromRect(
+              Rect.fromPoints(
+                details.globalPosition,
+                details.globalPosition,
+              ),
+              Offset.zero & overlay.size,
+            );
+            
+            showMenu(
+              context: context,
+              position: position,
+              items: [
+                PopupMenuItem(
+                  child: const Text('Pin to dock'),
+                  onTap: () {
+                    Navigator.of(context).maybePop();
+                    onPin?.call(e);
+                  },
+                ),
+              ],
+            );
           },
+          child: InkWell(
+            borderRadius: BorderRadius.circular(18),
+            onTap: () {
+              Navigator.of(context).maybePop();
+              onLaunch(e);
+            },
           child: Container(
             decoration: BoxDecoration(
               color: Colors.transparent,
@@ -240,8 +271,8 @@ class AppGrid extends StatelessWidget {
               ],
             ),
           ),
-        );
-      },
+        ),);
+      }
     );
   }
 }
@@ -648,7 +679,11 @@ class _PanelHomeState extends State<PanelHome> {
         child: SizedBox(
           width: 1200,
           height: 900,
-          child: AppGrid(apps: apps, onLaunch: _launchEntry),
+          child: AppGrid(
+            apps: apps,
+            onLaunch: _launchEntry,
+            onPin: _pinToDock,
+          ),
         ),
       ),
     );
@@ -671,6 +706,40 @@ class _PanelHomeState extends State<PanelHome> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to launch ${entry.name}: $e')),
       );
+    }
+  }
+
+  void _showDockIconMenu(BuildContext context, TapUpDetails details, int index) {
+    final RenderBox overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final position = RelativeRect.fromRect(
+      Rect.fromPoints(
+        details.globalPosition,
+        details.globalPosition,
+      ),
+      Offset.zero & overlay.size,
+    );
+    
+    showMenu(
+      context: context,
+      position: position,
+      items: [
+        PopupMenuItem(
+          child: const Text('Unpin from dock'),
+          onTap: () {
+            setState(() {
+              _pinned.removeAt(index);
+            });
+          },
+        ),
+      ],
+    );
+  }
+
+  void _pinToDock(DesktopEntry entry) {
+    if (_pinned.length < 10 && !_pinned.any((e) => e.name == entry.name)) {
+      setState(() {
+        _pinned.add(entry);
+      });
     }
   }
 
@@ -1177,9 +1246,11 @@ class _PanelHomeState extends State<PanelHome> {
                               ..._pinned.asMap().entries.expand(
                                 (entry) {
                                   if (entry.value.iconPath != null) {
+                                    Widget icon;
                                     if (entry.value.isSvgIcon) {
-                                      return [
-                                        _DockIcon(
+                                      icon = GestureDetector(
+                                        onSecondaryTapUp: (details) => _showDockIconMenu(context, details, entry.key),
+                                        child: _DockIcon(
                                           customChild: SvgPicture.file(
                                             File(entry.value.iconPath!),
                                             width: 48,
@@ -1189,26 +1260,32 @@ class _PanelHomeState extends State<PanelHome> {
                                           onTap: () => _launchEntry(entry.value),
                                           name: entry.value.name,
                                         ),
-                                        if (entry.key < _pinned.length - 1) const SizedBox(width: 4),
-                                      ];
+                                      );
                                     } else {
-                                      return [
-                                        _DockIcon(
+                                      icon = GestureDetector(
+                                        onSecondaryTapUp: (details) => _showDockIconMenu(context, details, entry.key),
+                                        child: _DockIcon(
                                           iconData: FileImage(File(entry.value.iconPath!)),
                                           tooltip: entry.value.name,
                                           onTap: () => _launchEntry(entry.value),
                                           name: entry.value.name,
                                         ),
-                                        if (entry.key < _pinned.length - 1) const SizedBox(width: 4),
-                                      ];
+                                      );
                                     }
+                                    return [
+                                      icon,
+                                      if (entry.key < _pinned.length - 1) const SizedBox(width: 4),
+                                    ];
                                   } else {
                                     return [
-                                      _DockIcon(
-                                        icon: Icons.apps,
-                                        tooltip: entry.value.name,
-                                        onTap: () => _launchEntry(entry.value),
-                                        name: entry.value.name,
+                                      GestureDetector(
+                                        onSecondaryTapUp: (details) => _showDockIconMenu(context, details, entry.key),
+                                        child: _DockIcon(
+                                          icon: Icons.apps,
+                                          tooltip: entry.value.name,
+                                          onTap: () => _launchEntry(entry.value),
+                                          name: entry.value.name,
+                                        ),
                                       ),
                                       if (entry.key < _pinned.length - 1) const SizedBox(width: 4),
                                     ];
