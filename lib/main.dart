@@ -40,9 +40,15 @@ class PanelApp extends StatelessWidget {
 class DesktopEntry {
   final String name;
   final String? exec;
-  final ImageProvider<Object>? iconData;
+  late final String? iconPath;
+  final bool isSvgIcon;
 
-  DesktopEntry({required this.name, this.exec, this.iconData});
+  DesktopEntry({
+    required this.name,
+    this.exec,
+    this.iconPath,
+    this.isSvgIcon = false,
+  });
 
   static Future<List<DesktopEntry>> loadAll() async {
     // Standard locations for .desktop files
@@ -71,24 +77,72 @@ class DesktopEntry {
           String? exec;
           String? icon;
           bool inDesktopEntry = false;
+          bool shouldDisplay = true;
+          String currentDesktop = Platform.environment['XDG_CURRENT_DESKTOP']?.toUpperCase() ?? '';
+          
           for (final line in lines) {
             final l = line.trim();
-            if (l == '[Desktop Entry]') inDesktopEntry = true;
+            if (l == '[Desktop Entry]') {
+              inDesktopEntry = true;
+              continue;
+            }
             if (!inDesktopEntry || l.startsWith('#')) continue;
+            
+            // Basic fields
             if (l.startsWith('Name=')) name = l.substring(5);
             if (l.startsWith('Exec=')) exec = l.substring(5);
             if (l.startsWith('Icon=')) icon = l.substring(5);
-            if (name != null && exec != null) break;
+            
+            // Visibility flags
+            if (l == 'NoDisplay=true' || l == 'Hidden=true') {
+              shouldDisplay = false;
+              break;
+            }
+            
+            // OnlyShowIn handling
+            if (l.startsWith('OnlyShowIn=')) {
+              final environments = l.substring(11).split(';')
+                .where((e) => e.isNotEmpty)
+                .map((e) => e.toUpperCase())
+                .toList();
+              if (!environments.contains(currentDesktop)) {
+                shouldDisplay = false;
+                break;
+              }
+            }
+            
+            // NotShowIn handling
+            if (l.startsWith('NotShowIn=')) {
+              final environments = l.substring(10).split(';')
+                .where((e) => e.isNotEmpty)
+                .map((e) => e.toUpperCase())
+                .toList();
+              if (environments.contains(currentDesktop)) {
+                shouldDisplay = false;
+                break;
+              }
+            }
           }
-          if (name != null && exec != null && !seen.contains(name)) {
+          
+          if (name != null && exec != null && shouldDisplay && !seen.contains(name)) {
             seen.add(name);
-            entries.add(
-              DesktopEntry(
-                name: name,
-                exec: exec,
-                iconData: icon != null ? _iconProvider(icon) : null,
-              ),
-            );
+            if (icon != null) {
+              final iconPath = icon.startsWith('/') ? icon : IconProvider.findIcon(icon);
+              if (iconPath != null) {
+                entries.add(
+                  DesktopEntry(
+                    name: name,
+                    exec: exec,
+                    iconPath: iconPath,
+                    isSvgIcon: iconPath.toLowerCase().endsWith('.svg'),
+                  ),
+                );
+              } else {
+                entries.add(DesktopEntry(name: name, exec: exec));
+              }
+            } else {
+              entries.add(DesktopEntry(name: name, exec: exec));
+            }
           }
         } catch (_) {
           // Ignore parse errors
@@ -157,31 +211,27 @@ class AppGrid extends StatelessWidget {
               children: [
                 Builder(
                   builder: (context) {
-                    if (e.iconData == null) {
+                    if (e.iconPath == null) {
                       return const Icon(Icons.apps, size: 48);
                     }
                     
-                    final icon = e.iconData!;
-                    if (icon is FileImage) {
-                      final path = icon.file.path;
-                      if (path.toLowerCase().endsWith('.svg')) {
-                        // For SVG files, use SvgPicture
-                        return ClipRRect(
-                          borderRadius: BorderRadius.circular(28),
-                          child: SvgPicture.file(
-                            File(path),
-                            width: 56,
-                            height: 56,
-                          ),
-                        );
-                      }
+                    if (e.isSvgIcon) {
+                      // For SVG files, use SvgPicture
+                      return ClipRRect(
+                        borderRadius: BorderRadius.circular(28),
+                        child: SvgPicture.file(
+                          File(e.iconPath!),
+                          width: 56,
+                          height: 56,
+                        ),
+                      );
                     }
                     
                     // For regular images, use CircleAvatar
                     return CircleAvatar(
                       backgroundColor: Colors.transparent,
                       radius: 28,
-                      backgroundImage: icon,
+                      backgroundImage: FileImage(File(e.iconPath!)),
                     );
                   },
                 ),
@@ -200,6 +250,7 @@ class AppGrid extends StatelessWidget {
 class _DockIcon extends StatefulWidget {
   final IconData? icon;
   final ImageProvider<Object>? iconData;
+  final Widget? customChild;
   final String? tooltip;
   final VoidCallback onTap;
   final String? name;
@@ -207,10 +258,12 @@ class _DockIcon extends StatefulWidget {
   const _DockIcon({
     this.icon,
     this.iconData,
+    this.customChild,
     this.tooltip,
     required this.onTap,
     this.name,
-  }) : assert(icon != null || iconData != null, 'Either icon or iconData must be provided');
+  }) : assert(icon != null || iconData != null || customChild != null, 
+             'Either icon, iconData, or customChild must be provided');
 
   @override
   State<_DockIcon> createState() => _DockIconState();
@@ -262,21 +315,26 @@ class _DockIconState extends State<_DockIcon> with SingleTickerProviderStateMixi
                         borderRadius: BorderRadius.circular(10),
                         color: widget.iconData != null ? null : Colors.transparent,
                       ),
-                      child: widget.iconData != null
+                      child: widget.customChild != null
                           ? ClipRRect(
                               borderRadius: BorderRadius.circular(10),
-                              child: Image(
-                                image: widget.iconData!,
-                                width: 48,
-                                height: 48,
-                                fit: BoxFit.cover,
-                              ),
+                              child: widget.customChild!,
                             )
-                          : Icon(
-                              widget.icon ?? Icons.apps,
-                              size: 48,
-                              color: Colors.white.withOpacity(0.9),
-                            ),
+                          : widget.iconData != null
+                              ? ClipRRect(
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: Image(
+                                    image: widget.iconData!,
+                                    width: 48,
+                                    height: 48,
+                                    fit: BoxFit.cover,
+                                  ),
+                                )
+                              : Icon(
+                                  widget.icon ?? Icons.apps,
+                                  size: 48,
+                                  color: Colors.white.withOpacity(0.9),
+                                ),
                     ),
                     // Running indicator dot
                     Container(
@@ -1118,16 +1176,32 @@ class _PanelHomeState extends State<PanelHome> {
                             if (_pinned.isNotEmpty)
                               ..._pinned.asMap().entries.expand(
                                 (entry) {
-                                  if (entry.value.iconData != null) {
-                                    return [
-                                      _DockIcon(
-                                        iconData: entry.value.iconData,
-                                        tooltip: entry.value.name,
-                                        onTap: () => _launchEntry(entry.value),
-                                        name: entry.value.name,
-                                      ),
-                                      if (entry.key < _pinned.length - 1) const SizedBox(width: 4),
-                                    ];
+                                  if (entry.value.iconPath != null) {
+                                    if (entry.value.isSvgIcon) {
+                                      return [
+                                        _DockIcon(
+                                          customChild: SvgPicture.file(
+                                            File(entry.value.iconPath!),
+                                            width: 48,
+                                            height: 48,
+                                          ),
+                                          tooltip: entry.value.name,
+                                          onTap: () => _launchEntry(entry.value),
+                                          name: entry.value.name,
+                                        ),
+                                        if (entry.key < _pinned.length - 1) const SizedBox(width: 4),
+                                      ];
+                                    } else {
+                                      return [
+                                        _DockIcon(
+                                          iconData: FileImage(File(entry.value.iconPath!)),
+                                          tooltip: entry.value.name,
+                                          onTap: () => _launchEntry(entry.value),
+                                          name: entry.value.name,
+                                        ),
+                                        if (entry.key < _pinned.length - 1) const SizedBox(width: 4),
+                                      ];
+                                    }
                                   } else {
                                     return [
                                       _DockIcon(

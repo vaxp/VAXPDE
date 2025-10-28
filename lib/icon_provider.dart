@@ -3,12 +3,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 class IconProvider {
-  static ImageProvider<Object>? getIcon(String iconName) {
+  /// Find an icon file in the system icon theme
+  static String? findIcon(String iconName) {
     if (iconName.isEmpty) return null;
     
     // 1. If it's an absolute path, try it directly
     if (iconName.startsWith('/') && File(iconName).existsSync()) {
-      return FileImage(File(iconName));
+      return iconName;
     }
     
     // 2. Additional system icon paths
@@ -64,14 +65,14 @@ class IconProvider {
             for (final ext in extensions) {
               final path = '$sizeDir/$iconName$ext';
               if (File(path).existsSync()) {
-                return FileImage(File(path));
+                return path;
               }
             }
 
             // Try without extension
             final path = '$sizeDir/$iconName';
             if (File(path).existsSync()) {
-              return FileImage(File(path));
+              return path;
             }
           }
         }
@@ -82,16 +83,25 @@ class IconProvider {
     for (final ext in extensions) {
       final pixmapPath = '/usr/share/pixmaps/$iconName$ext';
       if (File(pixmapPath).existsSync()) {
-        return FileImage(File(pixmapPath));
+        return pixmapPath;
       }
     }
 
     // Try pixmaps without extension
     final pixmapPath = '/usr/share/pixmaps/$iconName';
     if (File(pixmapPath).existsSync()) {
-      return FileImage(File(pixmapPath));
+      return pixmapPath;
     }
 
+    return null;
+  }
+
+  /// Get an ImageProvider for the icon file
+  static ImageProvider<Object>? getIcon(String iconName) {
+    final path = findIcon(iconName);
+    if (path != null) {
+      return FileImage(File(path));
+    }
     return null;
   }
 
