@@ -4,6 +4,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import '../../common/models/desktop_entry.dart';
 import '../../common/widgets/dock_icon.dart';
 import '../services/app_launcher.dart';
+import '../services/launcher_window.dart';
 import 'app_grid.dart';
 
 class DockBar extends StatefulWidget {
@@ -123,8 +124,12 @@ class _DockBarState extends State<DockBar> {
                   icon: Icons.apps,
                   tooltip: 'Show all apps',
                   onTap: () async {
-                    final apps = await _allAppsFuture;
-                    _openAppGrid(apps);
+                    final handled = await LauncherWindow.toggleLauncherWindow();
+                    if (!handled) {
+                      // Fallback to in-app dialog if multi-window is unavailable
+                      final apps = await _allAppsFuture;
+                      _openAppGrid(apps);
+                    }
                   },
                 ),
                 _buildSeparator(),

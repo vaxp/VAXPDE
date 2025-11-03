@@ -3,11 +3,70 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:desktop_multi_window/desktop_multi_window.dart';
+
 import 'icon_provider.dart';
 import 'icon_loader.dart';
+import 'dock/services/launcher_window.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // If this engine was launched as a new window, WindowController.fromCurrentEngine
+  // returns a controller with the window arguments. We use that to decide whether
+  // to show the launcher-only UI in this process.
+  try {
+    final controller = await WindowController.fromCurrentEngine();
+    final args = controller.arguments;
+    if (args.contains('launcher')) {
+      runApp(const LauncherOnlyApp());
+      return;
+    }
+  } catch (_) {
+    // Not running in a child window - continue with normal app
+  }
+
   runApp(const PanelApp());
+}
+
+class LauncherOnlyApp extends StatefulWidget {
+  const LauncherOnlyApp({super.key});
+
+  @override
+  State<LauncherOnlyApp> createState() => _LauncherOnlyAppState();
+}
+
+class _LauncherOnlyAppState extends State<LauncherOnlyApp> {
+  late Future<List<DesktopEntry>> _appsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _appsFuture = DesktopEntry.loadAll();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Launcher',
+      theme: ThemeData.dark(),
+      home: Scaffold(
+        appBar: AppBar(title: const Text('All Applications')),
+        body: FutureBuilder<List<DesktopEntry>>(
+          future: _appsFuture,
+          builder: (context, snap) {
+            final apps = snap.data ?? [];
+            return AppGrid(apps: apps, onLaunch: (e) async {
+              final cmd = e.exec?.replaceAll(RegExp(r'%[a-zA-Z]'), '').trim();
+              if (cmd != null && cmd.isNotEmpty) {
+                await Process.start('/bin/sh', ['-c', cmd]);
+              }
+            });
+          },
+        ),
+      ),
+    );
+  }
 }
 
 class PanelApp extends StatelessWidget {
@@ -1227,8 +1286,11 @@ class _PanelHomeState extends State<PanelHome> {
                               icon: Icons.apps,
                               tooltip: 'Show all apps',
                               onTap: () async {
-                                final apps = await _allAppsFuture;
-                                _openAppGrid(apps);
+                                final handled = await LauncherWindow.toggleLauncherWindow();
+                                if (!handled) {
+                                  final apps = await _allAppsFuture;
+                                  _openAppGrid(apps);
+                                }
                               },
                             ),
                             // Separator
