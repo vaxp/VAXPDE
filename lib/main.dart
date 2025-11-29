@@ -1,31 +1,13 @@
 import 'dart:io';
-
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:desktop_multi_window/desktop_multi_window.dart';
-
 import 'icon_provider.dart';
 import 'icon_loader.dart';
 import 'dock/services/launcher_window.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // If this engine was launched as a new window, WindowController.fromCurrentEngine
-  // returns a controller with the window arguments. We use that to decide whether
-  // to show the launcher-only UI in this process.
-  try {
-    final controller = await WindowController.fromCurrentEngine();
-    final args = controller.arguments;
-    if (args.contains('launcher')) {
-      runApp(const LauncherOnlyApp());
-      return;
-    }
-  } catch (_) {
-    // Not running in a child window - continue with normal app
-  }
-
   runApp(const PanelApp());
 }
 
@@ -216,6 +198,7 @@ class DesktopEntry {
 
   // Tries to resolve an icon name to an AssetImage or FileImage
   // Supports system icon themes and all icon types using GTK
+  // ignore: unused_element
   static ImageProvider<Object>? _iconProvider(String iconName) {
     // Try GTK-based lookup first
     final gtkIcon = IconLoader.getIcon(iconName);
